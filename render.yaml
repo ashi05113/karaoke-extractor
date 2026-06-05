@@ -1,0 +1,19 @@
+# render.yaml — Render.com deployment configuration for Karaoke Extractor AI
+
+services:
+  - type: web
+    name: karaoke-extractor-ai
+    runtime: python
+    buildCommand: |
+      pip install -r requirements.txt
+      apt-get install -y ffmpeg || true
+    startCommand: gunicorn app:app --workers 2 --timeout 600 --bind 0.0.0.0:$PORT
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    disk:
+      name: karaoke-storage
+      mountPath: /opt/render/project/src
+      sizeGB: 10
