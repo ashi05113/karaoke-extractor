@@ -2,11 +2,13 @@
 Karaoke Extractor AI - Flask Backend
 Handles video download, audio extraction, and AI vocal separation using Demucs.
 pydub removed — uses subprocess ffmpeg directly (Python 3.13 compatible).
+Jobs stored in files so they survive worker restarts on Render free tier.
 """
 
 import os
 import uuid
 import time
+import json
 import shutil
 import threading
 import subprocess
@@ -24,17 +26,49 @@ BASE_DIR  = Path(__file__).parent
 DOWNLOADS = BASE_DIR / "downloads"
 UPLOADS   = BASE_DIR / "uploads"
 OUTPUT    = BASE_DIR / "output"
+JOBS_DIR  = BASE_DIR / "jobs"
 
-for d in [DOWNLOADS, UPLOADS, OUTPUT]:
+for d in [DOWNLOADS, UPLOADS, OUTPUT, JOBS_DIR]:
     d.mkdir(exist_ok=True)
 
-# In-memory job store
-JOBS: dict[str, dict] = {}
+COOKIES_FILE = BASE_DIR / "youtube.com_cookies.txt"
 
 ALLOWED_DOMAINS = [
     "youtube.com", "youtu.be", "www.youtube.com",
     "instagram.com", "www.instagram.com",
 ]
+
+# ─── File-based Job Store (survives worker restarts) ──────────────────────────
+
+def save_job(job_id: str, data: dict):
+    try:
+        with open(JOBS_DIR / f"{job_id}.json", "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+
+def load_job(job_id: str) -> dict | None:
+    try:
+        with open(JOBS_DIR / f"{job_id}.json") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def update_job(job_id: str, **kwargs):
+    job = load_job(job_id)
+    if job:
+        job.update(kwargs)
+        save_job(job_id, job)
+
+
+def delete_job(job_id: str):
+    try:
+        (JOBS_DIR / f"{job_id}.json").unlink(missing_ok=True)
+    except Exception:
+        pass
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -47,20 +81,13 @@ def validate_url(url: str) -> bool:
         return False
 
 
-def update_job(job_id: str, **kwargs):
-    if job_id in JOBS:
-        JOBS[job_id].update(kwargs)
-
-
 def get_audio_info(path: str) -> dict:
-    """Get duration and file size using ffprobe (no pydub needed)."""
     try:
         result = subprocess.run(
             ["ffprobe", "-v", "quiet", "-print_format", "json",
              "-show_format", str(path)],
             capture_output=True, text=True
         )
-        import json
         info = json.loads(result.stdout)
         duration = float(info.get("format", {}).get("duration", 0))
         size_mb  = round(os.path.getsize(path) / (1024 * 1024), 2)
@@ -70,7 +97,6 @@ def get_audio_info(path: str) -> dict:
 
 
 def ffmpeg_convert(src: str, dst: str, extra_args: list = []):
-    """Convert audio file using ffmpeg subprocess directly."""
     cmd = ["ffmpeg", "-y", "-i", src] + extra_args + [dst]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -83,7 +109,7 @@ def cleanup_job_files(job_id: str, delay: int = 3600):
         for directory in [DOWNLOADS / job_id, OUTPUT / job_id]:
             if directory.exists():
                 shutil.rmtree(directory, ignore_errors=True)
-        JOBS.pop(job_id, None)
+        delete_job(job_id)
     threading.Thread(target=_delete, daemon=True).start()
 
 
@@ -101,17 +127,20 @@ def process_url(job_id: str, url: str):
                    message="📥 Downloading video…")
 
         ydl_opts = {
-    "format":     "bestaudio/best",
-    "outtmpl":    str(job_dir / "%(title)s.%(ext)s"),
-    "noplaylist": True,
-    "quiet":      True,
-    "no_warnings": True,
-    "cookiefile": "/opt/render/project/src/youtube.com_cookies.txt",
-    "extractor_args": {"youtube": {"player_client": ["web_creator", "tv"]}},
-    "http_headers": {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    },
-}
+            "format":      "bestaudio/best",
+            "outtmpl":     str(job_dir / "%(title)s.%(ext)s"),
+            "noplaylist":  True,
+            "quiet":       True,
+            "no_warnings": True,
+            "extractor_args": {"youtube": {"player_client": ["web_creator", "tv"]}},
+            "http_headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            },
+        }
+
+        # Add cookies if file exists
+        if COOKIES_FILE.exists():
+            ydl_opts["cookiefile"] = str(COOKIES_FILE)
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info        = ydl.extract_info(url, download=True)
@@ -135,7 +164,6 @@ def process_url(job_id: str, url: str):
             .run(quiet=True)
         )
 
-        # Save original as MP3 and WAV using ffmpeg subprocess
         orig_mp3 = str(out_dir / "original.mp3")
         orig_wav = str(out_dir / "original.wav")
         ffmpeg_convert(wav_path, orig_mp3, ["-b:a", "192k"])
@@ -176,13 +204,11 @@ def process_url(job_id: str, url: str):
             vocals_file = stem_folder / "vocals.wav"
         vocals_src = str(vocals_file)
 
-        # Convert instrumental
         inst_mp3 = str(out_dir / "instrumental.mp3")
         inst_wav = str(out_dir / "instrumental.wav")
         ffmpeg_convert(no_vocals_src, inst_mp3, ["-b:a", "192k"])
         ffmpeg_convert(no_vocals_src, inst_wav)
 
-        # Convert vocals
         vox_mp3 = str(out_dir / "vocals.mp3")
         vox_wav = str(out_dir / "vocals.wav")
         if Path(vocals_src).exists():
@@ -236,10 +262,11 @@ def extract():
         return jsonify({"error": "Only YouTube and Instagram URLs are supported."}), 400
 
     job_id = str(uuid.uuid4())
-    JOBS[job_id] = {
+    job_data = {
         "status": "queued", "progress": 0, "message": "Queued…",
         "files": {}, "title": "", "url": url, "created": time.time(),
     }
+    save_job(job_id, job_data)
 
     threading.Thread(target=process_url, args=(job_id, url), daemon=True).start()
     return jsonify({"job_id": job_id})
@@ -247,7 +274,7 @@ def extract():
 
 @app.route("/api/status/<job_id>")
 def status(job_id: str):
-    job = JOBS.get(job_id)
+    job = load_job(job_id)
     if not job:
         return jsonify({"error": "Job not found."}), 404
     return jsonify(job)
@@ -264,11 +291,23 @@ def download(job_id: str, filename: str):
 
 @app.route("/api/history")
 def history():
-    recent = [
-        {"job_id": jid, "title": j.get("title", "Unknown"),
-         "status": j["status"], "created": j.get("created", 0)}
-        for jid, j in JOBS.items() if j["status"] == "done"
-    ]
+    recent = []
+    try:
+        for jfile in JOBS_DIR.glob("*.json"):
+            try:
+                with open(jfile) as f:
+                    j = json.load(f)
+                if j.get("status") == "done":
+                    recent.append({
+                        "job_id": jfile.stem,
+                        "title": j.get("title", "Unknown"),
+                        "status": j["status"],
+                        "created": j.get("created", 0)
+                    })
+            except Exception:
+                continue
+    except Exception:
+        pass
     recent.sort(key=lambda x: x["created"], reverse=True)
     return jsonify(recent[:10])
 
