@@ -31,7 +31,7 @@ JOBS_DIR  = BASE_DIR / "jobs"
 for d in [DOWNLOADS, UPLOADS, OUTPUT, JOBS_DIR]:
     d.mkdir(exist_ok=True)
 
-COOKIES_FILE = BASE_DIR / "youtube.com_cookies.txt"
+COOKIES_FILE = Path("/etc/secrets/youtube_cookies.txt")
 
 ALLOWED_DOMAINS = [
     "youtube.com", "youtu.be", "www.youtube.com",
