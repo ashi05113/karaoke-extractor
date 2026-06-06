@@ -296,6 +296,26 @@ def download(job_id: str, filename: str):
     return send_file(str(file_path), as_attachment=True)
 
 
+@app.route("/api/debug-cookies")
+def debug_cookies():
+    import stat
+    info = {}
+    for label, path in [("secrets", COOKIES_FILE), ("tmp", TMP_COOKIES)]:
+        p = Path(path)
+        try:
+            exists = p.exists()
+            size = p.stat().st_size if exists else 0
+            mode = oct(stat.S_IMODE(p.stat().st_mode)) if exists else "N/A"
+            first_line = ""
+            if exists:
+                with open(str(p), "r") as f:
+                    first_line = f.readline().strip()[:80]
+            info[label] = {"path": str(p), "exists": exists, "size": size, "mode": mode, "first_line": first_line}
+        except Exception as e:
+            info[label] = {"path": str(p), "error": str(e)}
+    return jsonify(info)
+
+
 @app.route("/api/history")
 def history():
     recent = []
