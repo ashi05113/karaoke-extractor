@@ -36,7 +36,12 @@ TMP_COOKIES  = Path("/tmp/youtube_cookies.txt")
 
 # Startup pe cookies /tmp mein copy kar lo (writable location)
 try:
-    shutil.copy2(str(COOKIES_FILE), str(TMP_COOKIES))
+    with open(str(COOKIES_FILE), "rb") as src:
+        data = src.read()
+    with open(str(TMP_COOKIES), "wb") as dst:
+        dst.write(data)
+        dst.flush()
+        os.fsync(dst.fileno())
 except Exception:
     pass
 
