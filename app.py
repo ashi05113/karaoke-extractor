@@ -32,6 +32,13 @@ for d in [DOWNLOADS, UPLOADS, OUTPUT, JOBS_DIR]:
     d.mkdir(exist_ok=True)
 
 COOKIES_FILE = Path("/etc/secrets/youtube_cookies.txt")
+TMP_COOKIES  = Path("/tmp/youtube_cookies.txt")
+
+# Startup pe cookies /tmp mein copy kar lo (writable location)
+try:
+    shutil.copy2(str(COOKIES_FILE), str(TMP_COOKIES))
+except Exception:
+    pass
 
 ALLOWED_DOMAINS = [
     "youtube.com", "youtu.be", "www.youtube.com",
@@ -138,15 +145,10 @@ def process_url(job_id: str, url: str):
             },
         }
 
-        # Add cookies if file is readable and non-empty
-        # Copy cookies to /tmp (writable) and use from there
-_tmp_cookies = Path("/tmp/youtube_cookies.txt")
-try:
-    import shutil as _shutil
-    _shutil.copy2(str(COOKIES_FILE), str(_tmp_cookies))
-    ydl_opts["cookiefile"] = str(_tmp_cookies)
-except Exception:
-    pass
+        # /tmp se cookies use karo (read-only issue avoid)
+        if TMP_COOKIES.exists():
+            ydl_opts["cookiefile"] = str(TMP_COOKIES)
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info        = ydl.extract_info(url, download=True)
             video_title = info.get("title", "audio")
