@@ -139,13 +139,14 @@ def process_url(job_id: str, url: str):
         }
 
         # Add cookies if file is readable and non-empty
-        try:
-            with open(str(COOKIES_FILE), "r") as _f:
-                if _f.read(10):
-                    ydl_opts["cookiefile"] = str(COOKIES_FILE)
-        except Exception:
-            pass
-
+        # Copy cookies to /tmp (writable) and use from there
+_tmp_cookies = Path("/tmp/youtube_cookies.txt")
+try:
+    import shutil as _shutil
+    _shutil.copy2(str(COOKIES_FILE), str(_tmp_cookies))
+    ydl_opts["cookiefile"] = str(_tmp_cookies)
+except Exception:
+    pass
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info        = ydl.extract_info(url, download=True)
             video_title = info.get("title", "audio")
