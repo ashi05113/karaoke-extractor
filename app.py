@@ -132,15 +132,20 @@ def process_url(job_id: str, url: str):
             "noplaylist":  True,
             "quiet":       True,
             "no_warnings": True,
-            "extractor_args": {"youtube": {"player_client": ["web_creator", "tv"]}},
+            "extractor_args": {"youtube": {"player_client": ["web", "web_creator", "tv"]}},
             "http_headers": {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             },
         }
 
-        # Add cookies if file exists
-        if COOKIES_FILE.exists():
-            ydl_opts["cookiefile"] = str(COOKIES_FILE)
+        # Add cookies - always try, let yt-dlp handle if missing
+cookies_path = str(COOKIES_FILE)
+try:
+    with open(cookies_path, "r") as _f:
+        if _f.read(10):  # file readable aur non-empty hai
+            ydl_opts["cookiefile"] = cookies_path
+except Exception as _e:
+    pass  # cookies nahi mili, bina cookies try karenge
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info        = ydl.extract_info(url, download=True)
