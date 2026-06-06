@@ -138,14 +138,13 @@ def process_url(job_id: str, url: str):
             },
         }
 
-        # Add cookies - always try, let yt-dlp handle if missing
-cookies_path = str(COOKIES_FILE)
-try:
-    with open(cookies_path, "r") as _f:
-        if _f.read(10):  # file readable aur non-empty hai
-            ydl_opts["cookiefile"] = cookies_path
-except Exception as _e:
-    pass  # cookies nahi mili, bina cookies try karenge
+        # Add cookies if file is readable and non-empty
+        try:
+            with open(str(COOKIES_FILE), "r") as _f:
+                if _f.read(10):
+                    ydl_opts["cookiefile"] = str(COOKIES_FILE)
+        except Exception:
+            pass
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info        = ydl.extract_info(url, download=True)
